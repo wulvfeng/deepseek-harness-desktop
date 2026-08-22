@@ -1,0 +1,32 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+wheels/
+*.egg-info
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# App-specific
+config.db
+*.log
+_dbg_raw.py

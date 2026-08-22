@@ -1,0 +1,20 @@
+[project]
+name = "deepseek-harness-desktop"
+version = "0.1.0"
+description = "PyQt6 WebEngine 桌面浏览器模板 - 支持 URL/IP+端口/本地启动三种模式"
+readme = "README.md"
+authors = [
+    { name = "wulvfeng", email = "1561118966@qq.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "pyqt6>=6.11.0",
+    "pyqt6-webengine>=6.11.0",
+]
+
+[project.scripts]
+deepseek-harness-desktop = "main:main"
+
+[build-system]
+requires = ["uv_build>=0.12.3,<0.13.0"]
+build-backend = "uv_build"
