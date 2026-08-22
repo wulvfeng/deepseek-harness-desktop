@@ -64,12 +64,16 @@ python main.py
 启动后会自动加载配置中保存的网页来源，默认为 DeepSeek Harness Web 界面。
 
 > 💡 **首次使用**：如果默认 URL 无法访问，请点击工具栏「设置」按钮配置正确的地址。
+![主界面预览](docs/screenshot-main.png)
+
 
 ---
 
 ## ⚙️ 配置说明
 
 点击工具栏右侧的 **「设置」** 按钮打开配置面板。支持三种网页来源模式：
+![设置面板](docs/screenshot-settings.png)
+
 
 ### 模式一：直接网址 (URL)
 
@@ -146,6 +150,9 @@ python main.py
 | `F12` | 展开 / 收起命令日志面板 |
 
 > 日志面板默认隐藏，按 `F12` 即可切换显示，与浏览器 DevTools 体验一致。
+
+![F12 命令日志面板](docs/screenshot-log-panel.png)
+
 
 ---
 
