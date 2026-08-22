@@ -30,3 +30,6 @@ Thumbs.db
 config.db
 *.log
 _dbg_raw.py
+
+# Agent rules (local only)
+.AGENTS.md
