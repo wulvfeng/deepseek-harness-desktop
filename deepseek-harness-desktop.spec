@@ -62,7 +62,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,  # 如需 .ico 图标请放在项目根目录
+    icon='static/icon/app.ico',
 )
 
 coll = COLLECT(
