@@ -31,5 +31,10 @@ config.db
 *.log
 _dbg_raw.py
 
+# Build artifacts
+build/
+dist/
+*.spec.bak
+
 # Agent rules (local only)
 .AGENTS.md
