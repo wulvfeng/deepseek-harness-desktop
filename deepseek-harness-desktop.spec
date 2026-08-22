@@ -1,7 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 # PyInstaller spec file for deepseek-harness-desktop
 
-import os
 import sys
 from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
@@ -63,7 +62,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='static/icon/deepseek-copy-copy-copy.png' if os.path.exists('static/icon/deepseek-copy-copy-copy.png') else None,
+    icon=None,  # 如需 .ico 图标请放在项目根目录
 )
 
 coll = COLLECT(
