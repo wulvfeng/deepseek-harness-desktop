@@ -21,6 +21,7 @@ from PyQt6.QtCore import (
     QVariantAnimation,
 )
 from PyQt6.QtGui import QAction, QIcon, QKeySequence, QShortcut
+from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
     QLabel,
@@ -124,6 +125,7 @@ class MainWindow(QMainWindow):
         vlay.setContentsMargins(0, 0, 0, 0)
 
         self.view = QWebEngineView()
+        self._configure_webengine()
         self.view.titleChanged.connect(self._on_title_changed)
         self.view.loadStarted.connect(self._on_load_started)
         self.view.loadFinished.connect(self._on_load_finished)
@@ -138,6 +140,138 @@ class MainWindow(QMainWindow):
         self.splitter.setStretchFactor(0, 1)
         self.splitter.setStretchFactor(1, 0)
         self.setCentralWidget(self.splitter)
+
+    # ---------- WebEngine 配置 ----------
+    def _configure_webengine(self):
+        """配置 WebEngineView：剪贴板权限、右键菜单、外部链接、下载等。"""
+        page = self.view.page()
+        profile = page.profile()
+
+        # --- 剪贴板权限：允许网页写入系统剪贴板 ---
+        # 通过 JavaScript 注入兜底，确保 http 环境下也能复制
+        page.javaScriptConsoleMessage = self._on_js_console  # 可选：调试用
+
+        # --- 新窗口请求：在外部浏览器打开 ---
+        page.createWindowRequested.connect(self._on_new_window_requested)
+
+        # --- 启用右键上下文菜单 ---
+        self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.DefaultContextMenu)
+
+        # --- 下载处理 ---
+        profile.downloadRequested.connect(self._on_download_requested)
+
+        # --- 允许 Localhost 自签名证书（开发服务器常用） ---
+        from PyQt6.QtNetwork import QAbstractSocket, QSslCertificate, QSslError
+
+        def _ignore_ssl_errors(errors):
+            """忽略 localhost 开发环境的 SSL 错误。"""
+            for err in errors:
+                if err.error() == QSslError.SelfSignedCertificate:
+                    page.sslErrors.connect(lambda e: page.ignoreSslErrors())
+
+        profile.setSpellCheckEnabled(False)
+
+        # --- 全局 WebEngine 设置 ---
+        settings = page.settings()
+        settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.PluginsEnabled, True)
+        settings.setAttribute(QWebEngineSettings.WebAttribute.ScrollAnimatorEnabled, True)
+
+        # --- 注入剪贴板修复脚本 ---
+        # 在每个页面加载完成后注入 JS，确保 document.execCommand('copy') 可用
+        self._clipboard_js = """
+        (function() {
+            // 确保 navigator.clipboard 可用
+            if (!window.__clipboardPatched) {
+                window.__clipboardPatched = true;
+
+                // 备份原始方法
+                var origExecCommand = document.execCommand.bind(document);
+
+                // 重写 execCommand，确保 'copy' 命令始终可用
+                document.execCommand = function(cmd) {
+                    if (cmd === 'copy') {
+                        try {
+                            var sel = window.getSelection();
+                            if (sel && sel.rangeCount > 0) {
+                                var range = sel.getRangeAt(0);
+                                var text = range.toString();
+                                if (text) {
+                                    // 尝试通过 textarea + execCommand 复制
+                                    var ta = document.createElement('textarea');
+                                    ta.value = text;
+                                    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;';
+                                    document.body.appendChild(ta);
+                                    ta.select();
+                                    ta.setSelectionRange(0, ta.value.length);
+                                    var ok = origExecCommand('copy');
+                                    document.body.removeChild(ta);
+                                    return ok;
+                                }
+                            }
+                        } catch(e) {}
+                    }
+                    return origExecCommand.apply(document, arguments);
+                };
+
+                // 也重写 navigator.clipboard.writeText（如果存在）
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    var origWriteText = navigator.clipboard.writeText.bind(navigator.clipboard);
+                    navigator.clipboard.writeText = function(text) {
+                        try {
+                            var ta = document.createElement('textarea');
+                            ta.value = text;
+                            ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;';
+                            document.body.appendChild(ta);
+                            ta.select();
+                            ta.setSelectionRange(0, ta.value.length);
+                            document.execCommand('copy');
+                            document.body.removeChild(ta);
+                            return Promise.resolve();
+                        } catch(e) {
+                            return origWriteText(text);
+                        }
+                    };
+                }
+            }
+        })();
+        """
+        page.loadFinished.connect(self._inject_clipboard_js)
+
+    def _inject_clipboard_js(self, ok):
+        """页面加载完成后注入剪贴板修复脚本。"""
+        if ok:
+            self.view.page().runJavaScript(self._clipboard_js)
+
+    # ---------- 新窗口/链接处理 ----------
+    # ---------- 下载处理 ----------
+    def _on_download_requested(self, download):
+        """处理文件下载请求：弹出保存对话框。"""
+        from PyQt6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getSaveFileName(
+            self, "保存文件", download.suggestedFileName
+        )
+        if path:
+            download.setDownloadDirectory(os.path.dirname(path))
+            download.setDownloadFileName(os.path.basename(path))
+            download.accept()
+        else:
+            download.cancel()
+
+    # ---------- 新窗口/链接处理 ----------
+        """拦截新窗口请求：在系统默认浏览器中打开，而非空白页。"""
+        url = request.requestedUrl()
+        if url.isValid():
+            from PyQt6.QtGui import QDesktopServices
+            QDesktopServices.openUrl(url)
+        request.setReject(True)
+
+    def _on_js_console(self, level, msg, line, source):
+        """可选：将 WebEngine JS 控制台输出转发到日志面板。"""
+        if msg.startswith("[ clipboard"):
+            self.log_panel.append(f"[web] {msg}")
 
     # ---------- 工具栏 ----------
     def _build_toolbar(self):
