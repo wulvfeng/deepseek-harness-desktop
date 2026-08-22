@@ -152,7 +152,7 @@ class MainWindow(QMainWindow):
         page.javaScriptConsoleMessage = self._on_js_console  # 可选：调试用
 
         # --- 新窗口请求：在外部浏览器打开 ---
-        page.createWindowRequested.connect(self._on_new_window_requested)
+        page.newWindowRequested.connect(self._on_new_window_requested)
 
         # --- 启用右键上下文菜单 ---
         self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.DefaultContextMenu)
@@ -261,6 +261,7 @@ class MainWindow(QMainWindow):
             download.cancel()
 
     # ---------- 新窗口/链接处理 ----------
+    def _on_new_window_requested(self, request):
         """拦截新窗口请求：在系统默认浏览器中打开，而非空白页。"""
         url = request.requestedUrl()
         if url.isValid():
