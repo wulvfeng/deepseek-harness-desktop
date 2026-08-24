@@ -1,4 +1,4 @@
-"""主窗口：顶部工具栏（设置按钮）+ QtWebEngine 网页区域 + 命令执行日志面板。
+"""主窗口：顶部工具栏（仅设置按钮）+ 中文右键菜单 + QtWebEngine 网页区域 + 命令执行日志面板。
 
 应用启动时根据 SQLite 中的设置自动执行：
 - 直接网址 / IP+端口：直接加载对应网页
@@ -20,13 +20,15 @@ from PyQt6.QtCore import (
     QUrl,
     QVariantAnimation,
 )
-from PyQt6.QtGui import QAction, QIcon, QKeySequence, QShortcut
+from PyQt6.QtGui import QAction, QDesktopServices, QIcon, QKeySequence, QShortcut
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineProfile, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import (
+    QApplication,
     QLabel,
     QMainWindow,
     QMessageBox,
+    QMenu,
     QSplitter,
     QToolBar,
     QVBoxLayout,
@@ -38,6 +40,149 @@ from .log_widget import LogPanel
 from .settings_dialog import SettingsDialog
 
 LOG_PANEL_WIDTH = 340  # 日志面板展开宽度
+
+
+class CustomWebEngineView(QWebEngineView):
+    """自定义 WebEngineView：提供全中文右键菜单，集成导航操作。"""
+
+    def __init__(self, main_window=None, parent=None):
+        super().__init__(parent)
+        self._main_window = main_window
+
+    def contextMenuEvent(self, event):
+        """重写右键菜单事件，用全中文菜单替换默认英文菜单。
+
+        通过 JavaScript 异步检测右键位置下方的链接/图片元素，
+        再构建完整的中文右键菜单。
+        """
+        pos = event.pos()
+        global_pos = event.globalPos()
+        page = self.page()
+
+        # 通过 JS 获取右键位置下方的链接和图片地址
+        js = """
+        (function() {
+            var el = document.elementFromPoint(%d, %d);
+            var result = {linkUrl: '', imageUrl: ''};
+            if (el) {
+                // 向上查找最近的 <a> 链接
+                var a = el.closest ? el.closest('a') : null;
+                if (a && a.href) result.linkUrl = a.href;
+                // 检查是否为图片元素
+                if (el.tagName === 'IMG' && el.src) result.imageUrl = el.src;
+                // 检查背景图片
+                if (!result.imageUrl) {
+                    var bg = window.getComputedStyle(el).backgroundImage;
+                    if (bg && bg !== 'none') {
+                        var m = bg.match(/url\(['"]?(.+?)['"]?\)/);
+                        if (m) result.imageUrl = m[1];
+                    }
+                }
+            }
+            return JSON.stringify(result);
+        })();
+        """ % (pos.x(), pos.y())
+
+        def _on_hit_result(js_result):
+            """JS 返回后构建中文右键菜单。"""
+            link_url = None
+            img_url = None
+            try:
+                import json
+                data = json.loads(js_result)
+                if data.get("linkUrl"):
+                    link_url = data["linkUrl"]
+                if data.get("imageUrl"):
+                    img_url = data["imageUrl"]
+            except Exception:
+                pass
+
+            menu = QMenu(self)
+
+            # --- 链接操作 ---
+            if link_url:
+                from PyQt6.QtCore import QUrl as _QUrl
+                act_open_link = menu.addAction("在系统默认浏览器中打开链接")
+                act_open_link.triggered.connect(
+                    lambda u=link_url: QDesktopServices.openUrl(_QUrl(u))
+                )
+                act_copy_link = menu.addAction("复制链接地址")
+                act_copy_link.triggered.connect(
+                    lambda u=link_url: QApplication.clipboard().setText(u)
+                )
+                menu.addSeparator()
+
+            # --- 图片操作 ---
+            if img_url:
+                act_save_image = menu.addAction("图片另存为...")
+                act_save_image.triggered.connect(
+                    lambda: page.triggerAction(QWebEnginePage.WebAction.DownloadImageToDisk)
+                )
+                act_copy_image = menu.addAction("复制图片")
+                act_copy_image.triggered.connect(
+                    lambda: page.triggerAction(QWebEnginePage.WebAction.CopyImageToClipboard)
+                )
+                act_copy_image_url = menu.addAction("复制图片地址")
+                act_copy_image_url.triggered.connect(
+                    lambda u=img_url: QApplication.clipboard().setText(u)
+                )
+                menu.addSeparator()
+
+            # --- 剪贴板操作 ---
+            has_selection = bool(page.selectedText())
+
+            act_copy = menu.addAction("复制")
+            act_copy.setEnabled(has_selection)
+            act_copy.setShortcut(QKeySequence("Ctrl+C"))
+            act_copy.triggered.connect(
+                lambda: page.triggerAction(QWebEnginePage.WebAction.Copy)
+            )
+
+            act_paste = menu.addAction("粘贴")
+            act_paste.setShortcut(QKeySequence("Ctrl+V"))
+            act_paste.triggered.connect(
+                lambda: page.triggerAction(QWebEnginePage.WebAction.Paste)
+            )
+
+            act_cut = menu.addAction("剪切")
+            act_cut.setShortcut(QKeySequence("Ctrl+X"))
+            act_cut.setEnabled(has_selection)
+            act_cut.triggered.connect(
+                lambda: page.triggerAction(QWebEnginePage.WebAction.Cut)
+            )
+
+            act_select_all = menu.addAction("全选")
+            act_select_all.setShortcut(QKeySequence("Ctrl+A"))
+            act_select_all.triggered.connect(
+                lambda: page.triggerAction(QWebEnginePage.WebAction.SelectAll)
+            )
+
+            menu.addSeparator()
+
+            # --- 浏览器导航操作 ---
+            history = page.history()
+
+            act_back = menu.addAction("后退")
+            act_back.setEnabled(history.canGoBack())
+            act_back.triggered.connect(
+                lambda: page.triggerAction(QWebEnginePage.WebAction.Back)
+            )
+
+            act_forward = menu.addAction("前进")
+            act_forward.setEnabled(history.canGoForward())
+            act_forward.triggered.connect(
+                lambda: page.triggerAction(QWebEnginePage.WebAction.Forward)
+            )
+
+            act_reload = menu.addAction("刷新")
+            act_reload.triggered.connect(
+                lambda: page.triggerAction(QWebEnginePage.WebAction.Reload)
+            )
+
+            menu.exec(global_pos)
+
+        # 异步执行 JS 并在回调中构建菜单
+        page.runJavaScript(js, _on_hit_result)
 
 
 class LoadingOverlay(QWidget):
@@ -124,7 +269,7 @@ class MainWindow(QMainWindow):
         vlay = QVBoxLayout(self.view_container)
         vlay.setContentsMargins(0, 0, 0, 0)
 
-        self.view = QWebEngineView()
+        self.view = CustomWebEngineView(main_window=self)
         self._configure_webengine()
         self.view.titleChanged.connect(self._on_title_changed)
         self.view.loadStarted.connect(self._on_load_started)
@@ -143,25 +288,21 @@ class MainWindow(QMainWindow):
 
     # ---------- WebEngine 配置 ----------
     def _configure_webengine(self):
-        """配置 WebEngineView：剪贴板权限、右键菜单、外部链接、下载等。"""
+        """配置 WebEngineView：剪贴板权限、外部链接、下载等。"""
         page = self.view.page()
         profile = page.profile()
 
         # --- 剪贴板权限：允许网页写入系统剪贴板 ---
-        # 通过 JavaScript 注入兜底，确保 http 环境下也能复制
         page.javaScriptConsoleMessage = self._on_js_console  # 可选：调试用
 
         # --- 新窗口请求：在外部浏览器打开 ---
         page.newWindowRequested.connect(self._on_new_window_requested)
 
-        # --- 启用右键上下文菜单 ---
-        self.view.setContextMenuPolicy(Qt.ContextMenuPolicy.DefaultContextMenu)
-
         # --- 下载处理 ---
         profile.downloadRequested.connect(self._on_download_requested)
 
         # --- 允许 Localhost 自签名证书（开发服务器常用） ---
-        from PyQt6.QtNetwork import QAbstractSocket, QSslCertificate, QSslError
+        from PyQt6.QtNetwork import QSslError
 
         def _ignore_ssl_errors(errors):
             """忽略 localhost 开发环境的 SSL 错误。"""
@@ -180,17 +321,11 @@ class MainWindow(QMainWindow):
         settings.setAttribute(QWebEngineSettings.WebAttribute.ScrollAnimatorEnabled, True)
 
         # --- 注入剪贴板修复脚本 ---
-        # 在每个页面加载完成后注入 JS，确保 document.execCommand('copy') 可用
         self._clipboard_js = """
         (function() {
-            // 确保 navigator.clipboard 可用
             if (!window.__clipboardPatched) {
                 window.__clipboardPatched = true;
-
-                // 备份原始方法
                 var origExecCommand = document.execCommand.bind(document);
-
-                // 重写 execCommand，确保 'copy' 命令始终可用
                 document.execCommand = function(cmd) {
                     if (cmd === 'copy') {
                         try {
@@ -199,7 +334,6 @@ class MainWindow(QMainWindow):
                                 var range = sel.getRangeAt(0);
                                 var text = range.toString();
                                 if (text) {
-                                    // 尝试通过 textarea + execCommand 复制
                                     var ta = document.createElement('textarea');
                                     ta.value = text;
                                     ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;';
@@ -215,8 +349,6 @@ class MainWindow(QMainWindow):
                     }
                     return origExecCommand.apply(document, arguments);
                 };
-
-                // 也重写 navigator.clipboard.writeText（如果存在）
                 if (navigator.clipboard && navigator.clipboard.writeText) {
                     var origWriteText = navigator.clipboard.writeText.bind(navigator.clipboard);
                     navigator.clipboard.writeText = function(text) {
@@ -245,7 +377,6 @@ class MainWindow(QMainWindow):
         if ok:
             self.view.page().runJavaScript(self._clipboard_js)
 
-    # ---------- 新窗口/链接处理 ----------
     # ---------- 下载处理 ----------
     def _on_download_requested(self, download):
         """处理文件下载请求：弹出保存对话框。"""
@@ -265,9 +396,8 @@ class MainWindow(QMainWindow):
         """拦截新窗口请求：在系统默认浏览器中打开，而非空白页。"""
         url = request.requestedUrl()
         if url.isValid():
-            from PyQt6.QtGui import QDesktopServices
             QDesktopServices.openUrl(url)
-        request.setReject(True)
+        # 不调用 request.openIn() 即自动拒绝新窗口
 
     def _on_js_console(self, level, msg, line, source):
         """可选：将 WebEngine JS 控制台输出转发到日志面板。"""
@@ -280,17 +410,6 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
         self.addToolBar(toolbar)
-
-        act_back = QAction("后退", self)
-        act_back.triggered.connect(self.view.back)
-        act_forward = QAction("前进", self)
-        act_forward.triggered.connect(self.view.forward)
-        act_reload = QAction("刷新", self)
-        act_reload.triggered.connect(self.view.reload)
-        for act in (act_back, act_forward, act_reload):
-            toolbar.addAction(act)
-
-        toolbar.addSeparator()
 
         act_settings = QAction("设置", self)
         act_settings.triggered.connect(self.open_settings)
@@ -378,10 +497,9 @@ class MainWindow(QMainWindow):
                     self.log_panel.set_access_url(url)
                     self._wait_ready(url, timeout)
                 else:
-                    # 未指定地址：等待从命令输出中自动识别
                     self.log_panel.set_access_url("等待从命令输出识别地址...")
                     self._wait_ready(None, timeout)
-        except Exception as exc:  # 目录不存在、端口占用等
+        except Exception as exc:
             self._log(f"[error] 本地启动失败: {exc}")
             QMessageBox.warning(self, "本地启动失败", str(exc))
 
@@ -426,7 +544,7 @@ class MainWindow(QMainWindow):
             self._pending_url = None
 
     def _probe_ready(self, url):
-        """探测服务是否就绪；部分开发服务器只绑定 IPv6(::/::1)，此时把主机名换成 localhost 再试。"""
+        """探测服务是否就绪。"""
         if self._url_ok(url):
             return url
         parts = urlsplit(url)
@@ -441,12 +559,12 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _url_ok(url, timeout=1.0):
-        """返回 True 表示服务已响应（能连上即可，不要求 200）。"""
+        """返回 True 表示服务已响应。"""
         try:
             with urllib.request.urlopen(urllib.request.Request(url, method="GET"), timeout=timeout):
                 return True
         except urllib.error.HTTPError:
-            return True  # 返回了 HTTP 状态码即视为服务已启动
+            return True
         except Exception:
             return False
 
